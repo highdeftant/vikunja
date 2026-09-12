@@ -65,6 +65,34 @@ func TestMCP_Tools_TaskLifecycle(t *testing.T) {
 	assert.Equal(t, true, gone["isError"])
 	assert.Contains(t, toolResultText(t, gone), "404")
 }
+func TestMCP_Tools_UpdateExchangesMarkdown(t *testing.T) {
+	c := newMCPClient(t, mcpFullToken)
+	updated := c.callTool("tasks_update", map[string]any{
+		"projecttask": 1,
+		"format":      "markdown",
+		"description": "**bold** text",
+	})
+	require.NotContains(t, updated, "isError", toolResultText(t, updated))
+	var task map[string]any
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{
+		"projecttask": 1,
+		"format":      "markdown",
+	}), &task)
+	assert.Equal(t, "**bold** text", task["description"])
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": 1}), &task)
+	assert.Equal(t, "<p><strong>bold</strong> text</p>", task["description"])
+}
+func TestMCP_Tools_UpdateWithoutFormatStoresHTMLVerbatim(t *testing.T) {
+	c := newMCPClient(t, mcpFullToken)
+	updated := c.callTool("tasks_update", map[string]any{
+		"projecttask": 1,
+		"description": "<p><em>html</em> only</p>",
+	})
+	require.NotContains(t, updated, "isError", toolResultText(t, updated))
+	var task map[string]any
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": 1}), &task)
+	assert.Equal(t, "<p><em>html</em> only</p>", task["description"])
+}
 func TestMCP_Tools_UnchangedUpdateIsNotAnError(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	args := map[string]any{
