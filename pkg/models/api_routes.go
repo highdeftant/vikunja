@@ -514,7 +514,7 @@ var expandScopeRoutes = map[string]bool{
 	"/api/v1/projects/:project/views/:view/tasks":         true,
 	"/api/v1/projects/:project/views/:view/buckets":       true,
 	"/api/v2/tasks":                                       true,
-	"/api/v2/tasks/:projecttask":                          true,
+	"/api/v2/tasks/:task":                                 true,
 	"/api/v2/projects/:project/tasks":                     true,
 	"/api/v2/projects/:project/tasks/by-index/:index":     true,
 	"/api/v2/projects/:project/views/:view/tasks":         true,
