@@ -124,6 +124,15 @@ var exposedOperations = map[string]toolTier{
 	"users-search":                    typedTool,
 }
 
+// ExposedToolNames are the tool names the allow-list can produce. Exported so tests can check it against the live v2 routes.
+func ExposedToolNames() []string {
+	names := make([]string, 0, len(exposedOperations))
+	for id := range exposedOperations {
+		names = append(names, toolNameFor(id))
+	}
+	return names
+}
+
 func exposure(operationID string, op *huma.Operation) (typed bool, ok bool) {
 	tier, exposed := exposedOperations[operationID]
 	if !exposed {

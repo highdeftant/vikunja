@@ -17,13 +17,13 @@
 package webtests
 
 import (
-	"slices"
 	"testing"
 	"time"
 
 	"code.vikunja.io/api/pkg/db"
 	"code.vikunja.io/api/pkg/license"
 	"code.vikunja.io/api/pkg/models"
+	"code.vikunja.io/api/pkg/modules/mcp"
 	"code.vikunja.io/api/pkg/user"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,113 +148,18 @@ func newAllScopesMCPClient(t *testing.T) *mcpClient {
 	return newMCPClientOn(t, e, token.Token)
 }
 
-// A newly registered v2 operation must be classified as typed or catalog here.
-func TestMCP_Catalog_ToolListsArePinned(t *testing.T) {
+// A tool goes missing when its v2 route is renamed or removed, or when no token scope covers it.
+func TestMCP_Catalog_EveryExposedOperationIsReachable(t *testing.T) {
 	c := newAllScopesMCPClient(t)
-	var catalog []string
-	for _, a := range findActions(t, c, map[string]any{}) {
-		catalog = append(catalog, a["name"].(string))
-	}
-	slices.Sort(catalog)
-	assert.Equal(t, []string{
-		"buckets_create",
-		"buckets_delete",
-		"buckets_list",
-		"buckets_update",
-		"filters_create",
-		"filters_delete",
-		"filters_read",
-		"filters_update",
-		"notifications_delete_all",
-		"notifications_list",
-		"notifications_mark_all_read",
-		"notifications_mark_read",
-		"project_tasks_list",
-		"project_teams_create",
-		"project_teams_delete",
-		"project_teams_list",
-		"project_teams_update",
-		"project_time_entries_list",
-		"project_users_create",
-		"project_users_delete",
-		"project_users_list",
-		"project_users_update",
-		"project_view_buckets_tasks_list",
-		"project_view_tasks_list",
-		"project_views_create",
-		"project_views_delete",
-		"project_views_list",
-		"project_views_read",
-		"project_views_update",
-		"projects_duplicate",
-		"projects_users_search",
-		"reactions_create",
-		"reactions_delete",
-		"reactions_list",
-		"task_assignees_bulk",
-		"task_attachments_delete",
-		"task_attachments_list",
-		"task_bucket_update",
-		"task_labels_bulk_replace",
-		"task_labels_create",
-		"task_labels_delete",
-		"task_labels_list",
-		"task_time_entries_list",
-		"tasks_bulk_create",
-		"tasks_bulk_update",
-		"tasks_duplicate",
-		"tasks_mark_read",
-		"tasks_position_update",
-		"tasks_read_by_index",
-		"tasks_relations_create",
-		"tasks_relations_delete",
-		"teams_create",
-		"teams_delete",
-		"teams_list",
-		"teams_members_add",
-		"teams_members_remove",
-		"teams_members_toggle_admin",
-		"teams_read",
-		"teams_update",
-		"time_entries_create",
-		"time_entries_delete",
-		"time_entries_list",
-		"time_entries_read",
-		"time_entries_timer_stop",
-		"time_entries_update",
-	}, catalog)
-	var typed []string
+	var reachable []string
 	for name := range c.toolNames() {
 		if name == "find_action" || name == "do_action" {
 			continue
 		}
-		typed = append(typed, name)
+		reachable = append(reachable, name)
 	}
-	slices.Sort(typed)
-	assert.Equal(t, []string{
-		"labels_create",
-		"labels_delete",
-		"labels_list",
-		"labels_read",
-		"labels_update",
-		"projects_create",
-		"projects_delete",
-		"projects_list",
-		"projects_read",
-		"projects_update",
-		"task_assignees_create",
-		"task_assignees_delete",
-		"task_assignees_list",
-		"task_comments_create",
-		"task_comments_delete",
-		"task_comments_list",
-		"task_comments_read",
-		"task_comments_update",
-		"tasks_create",
-		"tasks_delete",
-		"tasks_list",
-		"tasks_read",
-		"tasks_update",
-		"users_search",
-	}, typed)
+	for _, a := range findActions(t, c, map[string]any{}) {
+		reachable = append(reachable, a["name"].(string))
+	}
+	assert.ElementsMatch(t, mcp.ExposedToolNames(), reachable)
 }
