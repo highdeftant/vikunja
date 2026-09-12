@@ -174,17 +174,17 @@ func TestBuildToolSpec_KeepsBodyFieldNotInThePath(t *testing.T) {
 	huma.Register(api, huma.Operation{
 		OperationID: "tasks-update",
 		Method:      http.MethodPut,
-		Path:        "/tasks/{projecttask}",
+		Path:        "/tasks/{task}",
 	}, func(_ context.Context, _ *struct {
-		Projecttask int64 `path:"projecttask"`
-		Body        models.Task
+		Task int64 `path:"task"`
+		Body models.Task
 	}) (*struct{}, error) {
 		return nil, nil
 	})
 	create, err := buildToolSpec(api.OpenAPI(), api.OpenAPI().Paths["/projects/{project}/tasks"].Post)
 	require.NoError(t, err)
 	assert.NotContains(t, create.schema.Properties, "project_id")
-	update, err := buildToolSpec(api.OpenAPI(), api.OpenAPI().Paths["/tasks/{projecttask}"].Put)
+	update, err := buildToolSpec(api.OpenAPI(), api.OpenAPI().Paths["/tasks/{task}"].Put)
 	require.NoError(t, err)
 	assert.Contains(t, update.schema.Properties, "project_id")
 }

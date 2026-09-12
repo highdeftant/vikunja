@@ -45,59 +45,59 @@ func TestMCP_Tools_TaskLifecycle(t *testing.T) {
 	id := int64(task["id"].(float64))
 	assert.Equal(t, "**keep me**", task["description"])
 	require.NotContains(t, c.callTool("tasks_update", map[string]any{
-		"projecttask": id,
-		"done":        true,
+		"task": id,
+		"done": true,
 	}), "isError")
-	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": id}), &task)
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"task": id}), &task)
 	assert.Equal(t, true, task["done"])
 	assert.Equal(t, "mcp task", task["title"])
 	assert.Equal(t, "**keep me**", task["description"])
 	assert.InDelta(t, 4, task["priority"], 0.001)
 	assert.Equal(t, "ff8800", task["hex_color"])
 	require.NotContains(t, c.callTool("tasks_update", map[string]any{
-		"projecttask": id,
-		"done":        false,
+		"task": id,
+		"done": false,
 	}), "isError")
-	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": id}), &task)
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"task": id}), &task)
 	assert.Equal(t, false, task["done"])
-	require.NotContains(t, c.callTool("tasks_delete", map[string]any{"projecttask": id}), "isError")
-	gone := c.callTool("tasks_read", map[string]any{"projecttask": id})
+	require.NotContains(t, c.callTool("tasks_delete", map[string]any{"task": id}), "isError")
+	gone := c.callTool("tasks_read", map[string]any{"task": id})
 	assert.Equal(t, true, gone["isError"])
 	assert.Contains(t, toolResultText(t, gone), "404")
 }
 func TestMCP_Tools_UpdateExchangesMarkdown(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	updated := c.callTool("tasks_update", map[string]any{
-		"projecttask": 1,
+		"task":        1,
 		"format":      "markdown",
 		"description": "**bold** text",
 	})
 	require.NotContains(t, updated, "isError", toolResultText(t, updated))
 	var task map[string]any
 	toolResultJSON(t, c.callTool("tasks_read", map[string]any{
-		"projecttask": 1,
-		"format":      "markdown",
+		"task":   1,
+		"format": "markdown",
 	}), &task)
 	assert.Equal(t, "**bold** text", task["description"])
-	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": 1}), &task)
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"task": 1}), &task)
 	assert.Equal(t, "<p><strong>bold</strong> text</p>", task["description"])
 }
 func TestMCP_Tools_UpdateWithoutFormatStoresHTMLVerbatim(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	updated := c.callTool("tasks_update", map[string]any{
-		"projecttask": 1,
+		"task":        1,
 		"description": "<p><em>html</em> only</p>",
 	})
 	require.NotContains(t, updated, "isError", toolResultText(t, updated))
 	var task map[string]any
-	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": 1}), &task)
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"task": 1}), &task)
 	assert.Equal(t, "<p><em>html</em> only</p>", task["description"])
 }
 func TestMCP_Tools_UnchangedUpdateIsNotAnError(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	args := map[string]any{
-		"projecttask": 1,
-		"title":       "same title",
+		"task":  1,
+		"title": "same title",
 	}
 	first := c.callTool("tasks_update", args)
 	require.NotContains(t, first, "isError", toolResultText(t, first))
@@ -115,11 +115,11 @@ func TestMCP_Tools_NullClearsAndUnsets(t *testing.T) {
 	}), &task)
 	id := int64(task["id"].(float64))
 	cleared := c.callTool("tasks_update", map[string]any{
-		"projecttask": id,
-		"due_date":    nil,
+		"task":     id,
+		"due_date": nil,
 	})
 	require.NotContains(t, cleared, "isError", toolResultText(t, cleared))
-	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"projecttask": id}), &task)
+	toolResultJSON(t, c.callTool("tasks_read", map[string]any{"task": id}), &task)
 	assert.NotContains(t, task["due_date"], "2030")
 	listed := c.callTool("tasks_list", map[string]any{"filter": nil})
 	assert.NotContains(t, listed, "isError", toolResultText(t, listed))
@@ -127,8 +127,8 @@ func TestMCP_Tools_NullClearsAndUnsets(t *testing.T) {
 func TestMCP_Tools_NullOnAConstrainedFieldIsError(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	res := c.callTool("tasks_update", map[string]any{
-		"projecttask": 1,
-		"title":       nil,
+		"task":  1,
+		"title": nil,
 	})
 	assert.Equal(t, true, res["isError"])
 	text := toolResultText(t, res)
@@ -142,8 +142,8 @@ func TestMCP_Tools_RecordsTokenUsagePerCall(t *testing.T) {
 	events.ClearDispatchedEvents()
 	rec := c.post(fmt.Sprintf(`[%s,%s,%s]`,
 		`{"jsonrpc":"2.0","id":200,"method":"tools/call","params":{"name":"projects_read","arguments":{"id":1}}}`,
-		`{"jsonrpc":"2.0","id":201,"method":"tools/call","params":{"name":"tasks_read","arguments":{"projecttask":1}}}`,
-		`{"jsonrpc":"2.0","id":202,"method":"tools/call","params":{"name":"tasks_read","arguments":{"projecttask":1,"expand":["reactions"]}}}`,
+		`{"jsonrpc":"2.0","id":201,"method":"tools/call","params":{"name":"tasks_read","arguments":{"task":1}}}`,
+		`{"jsonrpc":"2.0","id":202,"method":"tools/call","params":{"name":"tasks_read","arguments":{"task":1,"expand":["reactions"]}}}`,
 	))
 	require.Equal(t, http.StatusOK, rec.Code, "%s", rec.Body.String())
 	// One usage for the MCP request itself plus one per successful tool call; the scope-denied leg records none.
@@ -195,7 +195,7 @@ func assigneeIDs(t *testing.T, c *mcpClient) []int64 {
 	var assignees []struct {
 		ID int64 `json:"id"`
 	}
-	readAllItems(t, c.callTool("task_assignees_list", map[string]any{"projecttask": 1}), &assignees)
+	readAllItems(t, c.callTool("task_assignees_list", map[string]any{"task": 1}), &assignees)
 	ids := make([]int64, 0, len(assignees))
 	for _, a := range assignees {
 		ids = append(ids, a.ID)
@@ -205,13 +205,13 @@ func assigneeIDs(t *testing.T, c *mcpClient) []int64 {
 func TestMCP_Tools_AssigneeAddRemove(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	require.NotContains(t, c.callTool("task_assignees_create", map[string]any{
-		"projecttask": 1,
-		"user_id":     1,
+		"task":    1,
+		"user_id": 1,
 	}), "isError")
 	assert.Contains(t, assigneeIDs(t, c), int64(1))
 	require.NotContains(t, c.callTool("task_assignees_delete", map[string]any{
-		"projecttask": 1,
-		"user":        1,
+		"task": 1,
+		"user": 1,
 	}), "isError")
 	assert.NotContains(t, assigneeIDs(t, c), int64(1))
 }
@@ -258,8 +258,8 @@ func TestMCP_Tools_ValidationIsError(t *testing.T) {
 func TestMCP_Tools_UnknownArgumentIsError(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	res := c.callTool("tasks_read", map[string]any{
-		"projecttask": 1,
-		"bogus":       true,
+		"task":  1,
+		"bogus": true,
 	})
 	assert.Equal(t, true, res["isError"])
 	assert.Contains(t, toolResultText(t, res), "bogus")
@@ -301,13 +301,13 @@ func TestMCP_Tools_RESTValidationIsError(t *testing.T) {
 func TestMCP_Tools_ExpandRequiresScopeOnLoopback(t *testing.T) {
 	c := newMCPClient(t, mcpFullToken)
 	allowed := c.callTool("tasks_read", map[string]any{
-		"projecttask": 1,
-		"expand":      []string{"comments"},
+		"task":   1,
+		"expand": []string{"comments"},
 	})
 	require.NotContains(t, allowed, "isError", toolResultText(t, allowed))
 	denied := c.callTool("tasks_read", map[string]any{
-		"projecttask": 1,
-		"expand":      []string{"reactions"},
+		"task":   1,
+		"expand": []string{"reactions"},
 	})
 	assert.Equal(t, true, denied["isError"])
 	assert.Equal(t, `401 Unauthorized — the API token lacks a scope required by this call (check route and expand scopes)`, toolResultText(t, denied))
@@ -351,8 +351,8 @@ func TestMCP_Tools_LoopbackUsesTheAuthorisedToken(t *testing.T) {
 		"Bearer " + mcpFullToken,
 	}
 	denied := c.callTool("tasks_read", map[string]any{
-		"projecttask": 1,
-		"expand":      []string{"reactions"},
+		"task":   1,
+		"expand": []string{"reactions"},
 	})
 	assert.Equal(t, true, denied["isError"])
 	assert.Equal(t, `401 Unauthorized — the API token lacks a scope required by this call (check route and expand scopes)`, toolResultText(t, denied))
