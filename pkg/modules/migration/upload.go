@@ -22,34 +22,37 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
+	"sync"
 
-	"code.vikunja.io/api/pkg/config"
 	"code.vikunja.io/api/pkg/log"
 )
-
-const spoolDirName = "imports"
 
 // errEmptySpoolName guards the zero value: filepath.Base("") is ".", which
 // would resolve to the spool directory itself.
 var errEmptySpoolName = errors.New("no spooled upload name given")
 
+var spool struct {
+	sync.Mutex
+	dir string
+}
+
+// MkdirTemp creates the directory exclusively with 0700, so nothing planted in a shared temp dir can be reused.
 func spoolDir() (string, error) {
-	dir := filepath.Join(config.FilesBasePath.GetString(), spoolDirName)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	spool.Lock()
+	defer spool.Unlock()
+
+	// Tmp cleaners delete idle directories, so a long-running instance can lose its own.
+	if spool.dir != "" {
+		if fi, err := os.Lstat(spool.dir); err == nil && fi.IsDir() {
+			return spool.dir, nil
+		}
+	}
+
+	dir, err := os.MkdirTemp("", "vikunja-imports-*")
+	if err != nil {
 		return "", fmt.Errorf("could not create the import spool directory: %w", err)
 	}
-
-	// MkdirAll happily accepts a pre-existing symlink pointing anywhere, so the
-	// uploads could be redirected to a place someone else can read.
-	fi, err := os.Lstat(dir)
-	if err != nil {
-		return "", fmt.Errorf("could not check the import spool directory: %w", err)
-	}
-	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
-		return "", fmt.Errorf("the import spool directory %q is not a directory", dir)
-	}
-
+	spool.dir = dir
 	return dir, nil
 }
 
@@ -107,45 +110,5 @@ func RemoveSpooledUpload(name string) {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Errorf("[Migration] Could not remove the spooled import file %q: %s", name, err)
-	}
-}
-
-// CleanupSpooledUploads removes uploads left behind by an instance that died
-// mid-import. Only files older than the claim timeout are touched, so another
-// instance's in-flight spools survive.
-func CleanupSpooledUploads() {
-	timeout := config.MigrationClaimTimeout.GetDuration()
-	if timeout <= 0 {
-		return
-	}
-
-	dir, err := spoolDir()
-	if err != nil {
-		log.Errorf("[Migration] Could not clean up spooled imports: %s", err)
-		return
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		log.Errorf("[Migration] Could not read the import spool directory: %s", err)
-		return
-	}
-
-	cutoff := time.Now().Add(-timeout)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			log.Errorf("[Migration] Could not stat the spooled import file %q: %s", entry.Name(), err)
-			continue
-		}
-		if info.ModTime().After(cutoff) {
-			continue
-		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
-			log.Errorf("[Migration] Could not remove the orphaned import file %q: %s", entry.Name(), err)
-		}
 	}
 }

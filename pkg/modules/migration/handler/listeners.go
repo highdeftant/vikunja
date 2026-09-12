@@ -39,9 +39,6 @@ import (
 func RegisterListeners() {
 	events.RegisterListener((&MigrationRequestedEvent{}).Name(), &MigrationListener{})
 	events.RegisterListener((&FileMigrationRequestedEvent{}).Name(), &FileMigrationListener{})
-
-	// An instance that died mid-import left its upload behind.
-	migration.CleanupSpooledUploads()
 }
 
 // Only used for sentry

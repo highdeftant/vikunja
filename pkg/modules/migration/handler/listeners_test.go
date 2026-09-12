@@ -158,13 +158,6 @@ func registerStubFileMigrator(name string, migrateErr error) *stubFileMigratorSt
 	return state
 }
 
-func useTestSpoolDir(t *testing.T) {
-	t.Helper()
-	previous := config.FilesBasePath.GetString()
-	config.FilesBasePath.Set(t.TempDir())
-	t.Cleanup(func() { config.FilesBasePath.Set(previous) })
-}
-
 func spoolTestUpload(t *testing.T, src io.Reader) (name string, size int64) {
 	t.Helper()
 	name, size, err := migration.SpoolUpload(src)
@@ -204,7 +197,6 @@ func enableSentry(t *testing.T) {
 
 func TestFileMigrationListenerImportsSpooledUpload(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 	notifications.Fake()
 	t.Cleanup(notifications.Unfake)
 
@@ -248,7 +240,6 @@ func TestFileMigrationListenerImportsSpooledUpload(t *testing.T) {
 
 func TestFileMigrationListenerFailedImportReleasesClaim(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 	notifications.Fake()
 	t.Cleanup(notifications.Unfake)
 
@@ -277,7 +268,6 @@ func TestFileMigrationListenerFailedImportReleasesClaim(t *testing.T) {
 
 func TestFileMigrationListenerAppliesOptions(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 
 	state := registerStubFileMigrator("options-file-stub", nil)
 	u := getTestUser(t)
@@ -303,7 +293,6 @@ func TestFileMigrationListenerAppliesOptions(t *testing.T) {
 
 func TestFileMigrationListenerUnregisteredKindReleasesClaim(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 
 	u := getTestUser(t)
 	uploadName, uploadSize := spoolTestUpload(t, strings.NewReader("some export"))
@@ -326,7 +315,6 @@ func TestFileMigrationListenerUnregisteredKindReleasesClaim(t *testing.T) {
 
 func TestFileMigrationListenerMalformedPayloadIsNotRetried(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 
 	state := registerStubFileMigrator("malformed-file-stub", nil)
 
@@ -338,7 +326,6 @@ func TestFileMigrationListenerMalformedPayloadIsNotRetried(t *testing.T) {
 
 func TestFileMigrationListenerStaleEventDoesNothing(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 
 	state := registerStubFileMigrator("stale-file-stub", nil)
 	u := getTestUser(t)
@@ -367,7 +354,6 @@ func TestFileMigrationListenerStaleEventDoesNothing(t *testing.T) {
 
 func TestFileMigrationListenerForeignStatusIsNotImported(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 	notifications.Fake()
 	t.Cleanup(notifications.Unfake)
 
@@ -399,7 +385,6 @@ func TestFileMigrationListenerForeignStatusIsNotImported(t *testing.T) {
 
 func TestFileMigrationListenerReportedFailureStoresGenericMessage(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 	enableSentry(t)
 	notifications.Fake()
 	t.Cleanup(notifications.Unfake)
@@ -433,7 +418,6 @@ func TestFileMigrationListenerReportedFailureStoresGenericMessage(t *testing.T) 
 
 func TestFileMigrationListenerUserFacingStatusDistinguishesOutcomes(t *testing.T) {
 	clearMigrationStatus(t)
-	useTestSpoolDir(t)
 	notifications.Fake()
 	t.Cleanup(notifications.Unfake)
 
