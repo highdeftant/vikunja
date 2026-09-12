@@ -47,22 +47,50 @@ const (
 	maxMessagesPerRequest = 20
 )
 
-// Register must follow apiv2.RegisterAll so tools pick up the AutoPatch operations.
-// allowOrigin (nil trusts none) admits the wildcard-port origins Vikunja's CORS config allows and the stdlib check does not.
-func Register(api huma.API, group *echo.Group, allowOrigin func(origin string) bool) {
-	initTools(api, apiv2.GroupPrefix)
-	streamableHandler = newStreamableHandler()
-	originProtection = http.NewCrossOriginProtection()
-	allowCORSOrigin = allowOrigin
-	group.POST(routeSuffix, handler)
+type Module struct {
+	api       huma.API
+	index     map[string]*tool
+	order     []*tool
+	authorize func(token *models.APIToken, path, method string) bool
+
+	streamable  http.Handler
+	origin      *http.CrossOriginProtection
+	allowOrigin func(origin string) bool
 }
 
-func newServerForRequest(req *http.Request) *mcp.Server {
+// The api must be fully registered: tools are derived from the operations it holds, AutoPatch included.
+// allowOrigin (nil trusts none) admits the wildcard-port origins Vikunja's CORS config allows and the stdlib check does not.
+func newModule(api huma.API, allowOrigin func(origin string) bool) (*Module, error) {
+	index, order, err := buildTools(api.OpenAPI(), apiv2.GroupPrefix)
+	if err != nil {
+		return nil, err
+	}
+	m := &Module{
+		api:         api,
+		index:       index,
+		order:       order,
+		authorize:   (*models.APIToken).CanUseRoute,
+		origin:      http.NewCrossOriginProtection(),
+		allowOrigin: allowOrigin,
+	}
+	m.streamable = m.newStreamableHandler()
+	return m, nil
+}
+
+func Register(api huma.API, group *echo.Group, allowOrigin func(origin string) bool) {
+	m, err := newModule(api, allowOrigin)
+	if err != nil {
+		panic(err)
+	}
+	group.POST(routeSuffix, m.handler)
+}
+
+func (m *Module) newServerForRequest(req *http.Request) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{
 		Name:    "vikunja",
 		Version: version.Version,
 	}, nil)
-	addToolsAuthorizedBy(srv, tokenFrom(humabridge.EchoContextFrom(req.Context())))
+	m.addToolsAuthorizedBy(srv, tokenFrom(humabridge.EchoContextFrom(req.Context())))
 	return srv
 }
 
@@ -74,11 +102,11 @@ func tokenFrom(ec *echo.Context) *models.APIToken {
 	return token
 }
 
-func addToolsAuthorizedBy(srv *mcp.Server, token *models.APIToken) {
+func (m *Module) addToolsAuthorizedBy(srv *mcp.Server, token *models.APIToken) {
 	var catalog []*tool
-	for _, t := range snapshotTools() {
+	for _, t := range m.order {
 		switch {
-		case !t.authorized(token):
+		case !m.authorized(t, token):
 			continue
 		case !t.typed:
 			catalog = append(catalog, t)
@@ -88,14 +116,14 @@ func addToolsAuthorizedBy(srv *mcp.Server, token *models.APIToken) {
 			Name:        t.name,
 			Description: t.description,
 			InputSchema: t.spec.schema,
-		}, rawToolHandler(t.name))
+		}, m.rawToolHandler(t.name))
 	}
-	installCatalogTools(srv, catalog)
+	m.installCatalogTools(srv, catalog)
 }
 
-func rawToolHandler(name string) mcp.ToolHandler {
+func (m *Module) rawToolHandler(name string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		result, err := callTool(ctx, name, req.Params.Arguments)
+		result, err := m.callTool(ctx, name, req.Params.Arguments)
 		if err != nil {
 			//nolint:nilerr // Domain errors use MCP tool results.
 			return &mcp.CallToolResult{
@@ -115,25 +143,19 @@ func rawToolHandler(name string) mcp.ToolHandler {
 	}
 }
 
-var (
-	streamableHandler http.Handler
-	originProtection  *http.CrossOriginProtection
-	allowCORSOrigin   func(origin string) bool
-)
-
 // Stateless builds a server per request, so tools/list is filtered by the caller's token; localhost protection would reject deployments behind a loopback reverse proxy.
-func newStreamableHandler() http.Handler {
-	return mcp.NewStreamableHTTPHandler(newServerForRequest, &mcp.StreamableHTTPOptions{
+func (m *Module) newStreamableHandler() http.Handler {
+	return mcp.NewStreamableHTTPHandler(m.newServerForRequest, &mcp.StreamableHTTPOptions{
 		Stateless:                  true,
 		DisableLocalhostProtection: true,
 	})
 }
 
 // handler rejects JWTs, which bypass API-token route scopes.
-func handler(c *echo.Context) error {
+func (m *Module) handler(c *echo.Context) error {
 	req := c.Request()
 	// MCP is not a browser transport; the origin is checked before the body is read, after the token middleware has authenticated.
-	if err := originProtection.Check(req); err != nil && !originIsTrustedByCORS(req) {
+	if err := m.origin.Check(req); err != nil && !m.originIsTrustedByCORS(req) {
 		return echo.NewHTTPError(http.StatusForbidden, err.Error())
 	}
 	tokenAny := c.Get("api_token")
@@ -151,13 +173,13 @@ func handler(c *echo.Context) error {
 	if proceed, err := limitRequestBody(c, req); !proceed {
 		return err
 	}
-	http.StripPrefix(RoutePrefix, streamableHandler).ServeHTTP(c.Response(), req)
+	http.StripPrefix(RoutePrefix, m.streamable).ServeHTTP(c.Response(), req)
 	return nil
 }
 
-func originIsTrustedByCORS(req *http.Request) bool {
+func (m *Module) originIsTrustedByCORS(req *http.Request) bool {
 	origin := req.Header.Get("Origin")
-	return origin != "" && allowCORSOrigin != nil && allowCORSOrigin(origin)
+	return origin != "" && m.allowOrigin != nil && m.allowOrigin(origin)
 }
 
 // Written instead of returned: error_handler.go rewrites a returned 413 into the generic "file is too large" error.

@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 
 	"code.vikunja.io/api/pkg/models"
 
@@ -36,25 +35,6 @@ type tool struct {
 	spec        *toolSpec
 	contentType string
 	description string
-}
-
-var (
-	toolsAPI  huma.API
-	toolsMu   sync.RWMutex
-	toolIndex map[string]*tool
-	toolOrder []*tool
-)
-
-func initTools(api huma.API, groupPrefix string) {
-	index, order, err := buildTools(api.OpenAPI(), groupPrefix)
-	if err != nil {
-		panic(err)
-	}
-	toolsMu.Lock()
-	defer toolsMu.Unlock()
-	toolsAPI = api
-	toolIndex = index
-	toolOrder = order
 }
 
 type candidate struct {
@@ -148,23 +128,6 @@ func describe(oapi *huma.OpenAPI, op *huma.Operation) string {
 	return s
 }
 
-func findTool(name string) (*tool, bool) {
-	toolsMu.RLock()
-	defer toolsMu.RUnlock()
-	t, ok := toolIndex[name]
-	return t, ok
+func (m *Module) authorized(t *tool, token *models.APIToken) bool {
+	return m.authorize(token, t.echoPath, t.op.Method)
 }
-func snapshotTools() []*tool {
-	toolsMu.RLock()
-	defer toolsMu.RUnlock()
-	out := make([]*tool, len(toolOrder))
-	copy(out, toolOrder)
-	return out
-}
-
-var routeAuthorizer = (*models.APIToken).CanUseRoute
-
-func (t *tool) authorized(token *models.APIToken) bool {
-	return routeAuthorizer(token, t.echoPath, t.op.Method)
-}
-func currentAPI() huma.API { toolsMu.RLock(); defer toolsMu.RUnlock(); return toolsAPI }

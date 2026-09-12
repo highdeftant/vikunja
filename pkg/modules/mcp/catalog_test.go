@@ -26,13 +26,11 @@ import (
 )
 
 func TestCatalogActions(t *testing.T) {
-	initTools(newTestAPI(t), "")
-	prev := routeAuthorizer
-	routeAuthorizer = func(_ *models.APIToken, path, _ string) bool { return path == "/things/:id" }
-	t.Cleanup(func() { routeAuthorizer = prev })
+	m := newTestModule(t)
+	m.authorize = func(_ *models.APIToken, path, _ string) bool { return path == "/api/v2/things/:id" }
 	var catalog []*tool
-	for _, tl := range snapshotTools() {
-		if !tl.typed && tl.authorized(nil) {
+	for _, tl := range m.order {
+		if !tl.typed && m.authorized(tl, nil) {
 			catalog = append(catalog, tl)
 		}
 	}
@@ -54,18 +52,18 @@ func TestCatalogActions(t *testing.T) {
 }
 
 func TestCatalogTools_RejectsUnknownArguments(t *testing.T) {
-	ctx := withTestCaller(t)
+	m, ctx := newTestCaller(t)
 	srv := sdk.NewServer(&sdk.Implementation{
 		Name:    "test",
 		Version: "1",
 	}, nil)
 	var catalog []*tool
-	for _, tl := range snapshotTools() {
+	for _, tl := range m.order {
 		if !tl.typed {
 			catalog = append(catalog, tl)
 		}
 	}
-	installCatalogTools(srv, catalog)
+	m.installCatalogTools(srv, catalog)
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 	ss, err := srv.Connect(ctx, serverTransport, nil)
 	require.NoError(t, err)

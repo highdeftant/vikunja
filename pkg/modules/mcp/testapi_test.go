@@ -26,7 +26,15 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/autopatch"
 	"github.com/danielgtaylor/huma/v2/humatest"
+	"github.com/stretchr/testify/require"
 )
+
+func newTestModule(t *testing.T) *Module {
+	t.Helper()
+	m, err := newModule(newTestAPI(t), nil)
+	require.NoError(t, err)
+	return m
+}
 
 type testThing struct {
 	ID          int64       `json:"id" readOnly:"true"`

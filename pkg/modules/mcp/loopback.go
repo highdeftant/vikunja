@@ -43,8 +43,8 @@ var (
 	errNoCaller     = errors.New("mcp: no caller request in context")
 )
 
-func callTool(ctx context.Context, name string, rawArgs json.RawMessage) (any, error) {
-	t, ok := findTool(name)
+func (m *Module) callTool(ctx context.Context, name string, rawArgs json.RawMessage) (any, error) {
+	t, ok := m.index[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", errToolNotFound, name)
 	}
@@ -54,7 +54,7 @@ func callTool(ctx context.Context, name string, rawArgs json.RawMessage) (any, e
 		return nil, errNoCaller
 	}
 	token := tokenFrom(ec)
-	if !t.authorized(token) {
+	if !m.authorized(t, token) {
 		return nil, fmt.Errorf("%w: %s", errScopeDenied, name)
 	}
 	args, err := decodeArgs(t.spec, rawArgs)
@@ -66,7 +66,7 @@ func callTool(ctx context.Context, name string, rawArgs json.RawMessage) (any, e
 		return nil, fmt.Errorf("mcp: invalid arguments for %s: %w", name, err)
 	}
 	rec := httptest.NewRecorder()
-	currentAPI().Adapter().ServeHTTP(rec, req)
+	m.api.Adapter().ServeHTTP(rec, req)
 	// The loopback runs as an internal dispatch, for which the auth middleware skips the usage event;
 	// a denied leg records none, just as the middleware dispatches nothing when the route check fails.
 	if rec.Code < 400 {

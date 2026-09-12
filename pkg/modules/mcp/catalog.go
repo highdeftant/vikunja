@@ -77,7 +77,7 @@ var doActionSpec = mustResolveSpec(toolDoAction, &jsonschema.Schema{
 	AdditionalProperties: falseSchema(),
 })
 
-func installCatalogTools(srv *mcp.Server, catalog []*tool) {
+func (m *Module) installCatalogTools(srv *mcp.Server, catalog []*tool) {
 	areas := map[string]bool{}
 	for _, t := range catalog {
 		if len(t.op.Tags) == 0 {
@@ -101,7 +101,7 @@ func installCatalogTools(srv *mcp.Server, catalog []*tool) {
 		Name:        toolDoAction,
 		Description: "Invoke an action discovered via find_action. Arguments must match its input_schema.",
 		InputSchema: doActionSpec.schema,
-	}, doActionHandler)
+	}, m.doActionHandler)
 }
 func catalogActions(catalog []*tool, action, resource string) []actionInfo {
 	out := []actionInfo{}
@@ -147,13 +147,13 @@ func findActionHandler(catalog []*tool) mcp.ToolHandler {
 		}, nil
 	}
 }
-func doActionHandler(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *Module) doActionHandler(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var args doActionArgs
 	if err := decodeToolArgs(doActionSpec, req.Params.Arguments, &args); err != nil {
 		//nolint:nilerr // Domain errors use MCP tool results.
 		return invalidArgsResult(toolDoAction, err), nil
 	}
-	return rawToolHandler(args.Action)(ctx, &mcp.CallToolRequest{
+	return m.rawToolHandler(args.Action)(ctx, &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
 			Name:      args.Action,
 			Arguments: args.Arguments,

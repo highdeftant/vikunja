@@ -203,9 +203,9 @@ func TestBuildToolSpec_ParamBodyCollision(t *testing.T) {
 	require.Error(t, err)
 }
 func TestInit_BuildsToolIndex(t *testing.T) {
-	initTools(newTestAPI(t), "")
+	m := newTestModule(t)
 	var names []string
-	for _, tl := range snapshotTools() {
+	for _, tl := range m.order {
 		names = append(names, tl.name)
 	}
 	assert.ElementsMatch(t, []string{
@@ -215,28 +215,21 @@ func TestInit_BuildsToolIndex(t *testing.T) {
 		"things_update",
 		"things_delete",
 	}, names)
-	update, ok := findTool("things_update")
+	update, ok := m.index["things_update"]
 	require.True(t, ok)
 	assert.Equal(t, http.MethodPatch, update.op.Method)
 	assert.Equal(t, "application/merge-patch+json", update.contentType)
-	assert.Equal(t, "/things/:id", update.echoPath)
+	assert.Equal(t, "/api/v2/things/:id", update.echoPath)
 	assert.Contains(t, update.description, "Only fields present")
-	read, _ := findTool("things_read")
-	assert.False(t, read.typed)
-	_, denied := findTool("tokens_create")
+	assert.False(t, m.index["things_read"].typed)
+	_, denied := m.index["tokens_create"]
 	assert.False(t, denied)
 }
 func TestInit_UpdateDescriptionComesFromThePut(t *testing.T) {
-	initTools(newTestAPI(t), "")
-	update, ok := findTool("things_update")
+	update, ok := newTestModule(t).index["things_update"]
 	require.True(t, ok)
 	assert.Equal(t, "Update a thing. Moving a thing needs write access to the target. Only fields present in the arguments are changed. Rich-text fields are exchanged as HTML here.", update.description)
 	assert.NotContains(t, update.description, "JSON Patch")
-}
-func TestInit_PrefixesEchoPath(t *testing.T) {
-	initTools(newTestAPI(t), "/api/v2")
-	read, _ := findTool("things_read")
-	assert.Equal(t, "/api/v2/things/:id", read.echoPath)
 }
 
 type recursiveInput struct {
