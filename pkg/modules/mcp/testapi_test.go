@@ -31,7 +31,7 @@ import (
 
 func newTestModule(t *testing.T) *Module {
 	t.Helper()
-	m, err := newModule(newTestAPI(t), nil)
+	m, err := New(newTestAPI(t), nil)
 	require.NoError(t, err)
 	return m
 }

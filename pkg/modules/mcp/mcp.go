@@ -58,9 +58,9 @@ type Module struct {
 	allowOrigin func(origin string) bool
 }
 
-// The api must be fully registered: tools are derived from the operations it holds, AutoPatch included.
+// Tools come from api's operations, so apiv2.RegisterAll must have run — AutoPatch adds its PATCH ops there.
 // allowOrigin (nil trusts none) admits the wildcard-port origins Vikunja's CORS config allows and the stdlib check does not.
-func newModule(api huma.API, allowOrigin func(origin string) bool) (*Module, error) {
+func New(api huma.API, allowOrigin func(origin string) bool) (*Module, error) {
 	index, order, err := buildTools(api.OpenAPI(), apiv2.GroupPrefix)
 	if err != nil {
 		return nil, err
@@ -77,11 +77,7 @@ func newModule(api huma.API, allowOrigin func(origin string) bool) (*Module, err
 	return m, nil
 }
 
-func Register(api huma.API, group *echo.Group, allowOrigin func(origin string) bool) {
-	m, err := newModule(api, allowOrigin)
-	if err != nil {
-		panic(err)
-	}
+func (m *Module) Register(group *echo.Group) {
 	group.POST(routeSuffix, m.handler)
 }
 
