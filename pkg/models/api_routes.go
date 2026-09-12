@@ -521,6 +521,16 @@ var expandScopeRoutes = map[string]bool{
 	"/api/v2/projects/:project/views/:view/buckets/tasks": true,
 }
 
+// ExpandScopeRoutes exposes the keys so pkg/webtests can assert they still match
+// registered echo routes; pkg/models cannot import pkg/routes to check itself.
+func ExpandScopeRoutes() []string {
+	paths := make([]string, 0, len(expandScopeRoutes))
+	for path := range expandScopeRoutes {
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 func requiredScopeForExpand(value string) (group, permission string, needsScope bool) {
 	switch TaskCollectionExpandable(value) {
 	case TaskCollectionExpandComments, TaskCollectionExpandCommentCount:
