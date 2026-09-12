@@ -40,7 +40,9 @@ func falseSchema() *jsonschema.Schema { return &jsonschema.Schema{Not: &jsonsche
 
 const maxInlineDepth = 8
 
-const formatParamDescription = "Rich-text format for description fields: html (default) or markdown. Updates always exchange HTML."
+const formatParam = "format"
+
+const formatParamDescription = "Rich-text format for description fields: html (default) or markdown. Updates convert markdown to HTML, so use html unless you wrote the description as markdown."
 
 func buildToolSpec(oapi *huma.OpenAPI, op *huma.Operation) (*toolSpec, error) {
 	props := map[string]*jsonschema.Schema{}
@@ -58,7 +60,7 @@ func buildToolSpec(oapi *huma.OpenAPI, op *huma.Operation) (*toolSpec, error) {
 			ps.Description = p.Description
 		}
 		// The API description this parameter refers to is not reachable over MCP.
-		if p.In == "query" && p.Name == "format" {
+		if p.In == "query" && p.Name == formatParam {
 			ps.Description = formatParamDescription
 		}
 		props[p.Name] = ps
@@ -67,8 +69,19 @@ func buildToolSpec(oapi *huma.OpenAPI, op *huma.Operation) (*toolSpec, error) {
 			required = append(required, p.Name)
 		}
 	}
+	src := bodySchemaOp(oapi, op)
+	if op.Method == http.MethodPatch {
+		format, err := patchFormatArg(oapi, src)
+		if err != nil {
+			return nil, fmt.Errorf("mcp: %s: param %s: %w", op.OperationID, formatParam, err)
+		}
+		if format != nil {
+			delete(params, formatParam)
+			props[formatParam] = format
+		}
+	}
 	hasBody := false
-	if _, body := bodyMedia(bodySchemaOp(oapi, op)); body != nil {
+	if _, body := bodyMedia(src); body != nil {
 		fromPath := boundToPathParams(oapi, body, params)
 		body = inlineRefs(oapi, body, 0)
 		hasBody = true
@@ -117,6 +130,22 @@ func buildToolSpec(oapi *huma.OpenAPI, op *huma.Operation) (*toolSpec, error) {
 		params:   params,
 		hasBody:  hasBody,
 	}, nil
+}
+
+// AutoPatch's re-dispatch drops the query, so a PATCH tool sends the format as a header; apiv2 strips the query param from PATCH for the same reason.
+func patchFormatArg(oapi *huma.OpenAPI, src *huma.Operation) (*jsonschema.Schema, error) {
+	for _, p := range src.Parameters {
+		if p.In != "query" || p.Name != formatParam {
+			continue
+		}
+		ps, err := toJSONSchema(oapi, p.Schema)
+		if err != nil {
+			return nil, err
+		}
+		ps.Description = formatParamDescription
+		return ps, nil
+	}
+	return nil, nil
 }
 
 // Handlers bind these from the path and ignore the body value.

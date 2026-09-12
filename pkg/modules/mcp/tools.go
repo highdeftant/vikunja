@@ -123,7 +123,7 @@ func describe(oapi *huma.OpenAPI, op *huma.Operation) string {
 		s += ". " + src.Description
 	}
 	if op.Method == http.MethodPatch {
-		s += " Only fields present in the arguments are changed. Rich-text fields are exchanged as HTML here."
+		s += " Only fields present in the arguments are changed."
 	}
 	return s
 }

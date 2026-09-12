@@ -32,6 +32,7 @@ import (
 	"code.vikunja.io/api/pkg/log"
 	"code.vikunja.io/api/pkg/models"
 	"code.vikunja.io/api/pkg/modules/humabridge"
+	apiv2 "code.vikunja.io/api/pkg/routes/api/v2"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/labstack/echo/v5"
@@ -81,9 +82,17 @@ func (t *tool) newRequest(ctx context.Context, ec *echo.Context, args map[string
 	path := t.op.Path
 	query := url.Values{}
 	body := map[string]json.RawMessage{}
+	format := ""
 	for name, raw := range args {
 		p, isParam := t.spec.params[name]
 		switch {
+		// AutoPatch copies headers onto its internal GET and PUT, the query onto neither.
+		case name == formatParam && t.op.Method == http.MethodPatch:
+			v, err := scalarString(raw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for %q: %w", name, err)
+			}
+			format = v
 		case !isParam:
 			body[name] = raw
 		case p.In == "path":
@@ -125,6 +134,9 @@ func (t *tool) newRequest(ctx context.Context, ec *echo.Context, args map[string
 	req.Header.Set("Accept", "application/json")
 	if reader != nil {
 		req.Header.Set("Content-Type", t.contentType)
+	}
+	if format != "" {
+		req.Header.Set(apiv2.RichTextFormatHeader, format)
 	}
 	// Keep the public origin so generated links and the rate limiter see the real client.
 	req.Host = caller.Host

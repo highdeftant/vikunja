@@ -19,12 +19,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"code.vikunja.io/api/pkg/models"
 	"code.vikunja.io/api/pkg/modules/humabridge"
+	apiv2 "code.vikunja.io/api/pkg/routes/api/v2"
 
 	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/assert"
@@ -178,4 +180,26 @@ func TestCallTool_KeepsTheForwardedHost(t *testing.T) {
 	req, err := tl.newRequest(ctx, humabridge.EchoContextFrom(ctx), map[string]json.RawMessage{"id": json.RawMessage(`1`)})
 	require.NoError(t, err)
 	assert.Equal(t, "vikunja.example.com", req.Header.Get("X-Forwarded-Host"))
+}
+
+func TestNewRequest_PatchSendsFormatAsAHeader(t *testing.T) {
+	api := newRichTextAPI(t)
+	spec := specFor(t, api, http.MethodPatch, "/notes/{id}")
+	tl := &tool{
+		op:          api.OpenAPI().Paths["/notes/{id}"].Patch,
+		spec:        spec,
+		contentType: "application/merge-patch+json",
+	}
+	_, ctx := newTestCaller(t)
+	req, err := tl.newRequest(ctx, humabridge.EchoContextFrom(ctx), map[string]json.RawMessage{
+		"id":          json.RawMessage(`5`),
+		"format":      json.RawMessage(`"markdown"`),
+		"description": json.RawMessage(`"**bold**"`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "markdown", req.Header.Get(apiv2.RichTextFormatHeader))
+	assert.Equal(t, "/notes/5", req.URL.String())
+	body, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"description":"**bold**"}`, string(body))
 }

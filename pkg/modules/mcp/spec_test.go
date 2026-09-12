@@ -96,6 +96,7 @@ func TestBuildToolSpec_Patch(t *testing.T) {
 		"string",
 		"null",
 	}, spec.schema.Properties["description"].Types)
+	assert.NotContains(t, spec.schema.Properties, "format")
 	reminders := spec.schema.Properties["reminders"]
 	require.NotNil(t, reminders)
 	require.NotNil(t, reminders.Items)
@@ -228,7 +229,7 @@ func TestInit_BuildsToolIndex(t *testing.T) {
 func TestInit_UpdateDescriptionComesFromThePut(t *testing.T) {
 	update, ok := newTestModule(t).index["things_update"]
 	require.True(t, ok)
-	assert.Equal(t, "Update a thing. Moving a thing needs write access to the target. Only fields present in the arguments are changed. Rich-text fields are exchanged as HTML here.", update.description)
+	assert.Equal(t, "Update a thing. Moving a thing needs write access to the target. Only fields present in the arguments are changed.", update.description)
 	assert.NotContains(t, update.description, "JSON Patch")
 }
 
@@ -304,4 +305,49 @@ func TestBuildToolSpec_PatchKeepsRequiredFieldsNonNullable(t *testing.T) {
 		"string",
 		"null",
 	}, spec.schema.Properties["note"].Types)
+}
+
+func newRichTextAPI(t *testing.T) huma.API {
+	t.Helper()
+	cfg := huma.DefaultConfig("test", "1")
+	cfg.FieldsOptionalByDefault = true
+	_, api := humatest.New(t, cfg)
+	huma.Register(api, huma.Operation{
+		OperationID: "notes-read",
+		Method:      http.MethodGet,
+		Path:        "/notes/{id}",
+	}, func(_ context.Context, _ *struct {
+		ID     int64  `path:"id"`
+		Format string `query:"format" enum:"html,markdown"`
+	}) (*struct{}, error) {
+		return nil, nil
+	})
+	huma.Register(api, huma.Operation{
+		OperationID: "notes-update",
+		Method:      http.MethodPut,
+		Path:        "/notes/{id}",
+	}, func(_ context.Context, _ *struct {
+		ID     int64  `path:"id"`
+		Format string `query:"format" enum:"html,markdown"`
+		Body   struct {
+			Description string `json:"description"`
+		}
+	}) (*struct{}, error) {
+		return nil, nil
+	})
+	autopatch.AutoPatch(api)
+	return api
+}
+
+func TestBuildToolSpec_PatchTakesFormatAsAnArgument(t *testing.T) {
+	spec := specFor(t, newRichTextAPI(t), http.MethodPatch, "/notes/{id}")
+	format := spec.schema.Properties["format"]
+	require.NotNil(t, format)
+	assert.Equal(t, formatParamDescription, format.Description)
+	assert.Equal(t, []any{
+		"html",
+		"markdown",
+	}, format.Enum)
+	// Sending it as a query param would not survive AutoPatch's re-dispatch.
+	assert.NotContains(t, spec.params, "format")
 }
