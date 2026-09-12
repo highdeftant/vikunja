@@ -24,70 +24,117 @@ import (
 
 func toolNameFor(operationID string) string { return strings.ReplaceAll(operationID, "-", "_") }
 
-var typedTools = map[string]bool{
-	"labels_create":         true,
-	"labels_delete":         true,
-	"labels_list":           true,
-	"labels_read":           true,
-	"labels_update":         true,
-	"projects_create":       true,
-	"projects_delete":       true,
-	"projects_list":         true,
-	"projects_read":         true,
-	"projects_update":       true,
-	"task_assignees_create": true,
-	"task_assignees_delete": true,
-	"task_assignees_list":   true,
-	"task_comments_create":  true,
-	"task_comments_delete":  true,
-	"task_comments_list":    true,
-	"task_comments_read":    true,
-	"task_comments_update":  true,
-	"tasks_create":          true,
-	"tasks_delete":          true,
-	"tasks_list":            true,
-	"tasks_read":            true,
-	"tasks_update":          true,
-	"users_search":          true,
-}
+type toolTier int
 
-// Attachment uploads: multipart bodies never become tools. List/delete stay behind the attachments scope.
-var deniedOperationPrefixes = []string{
-	"admin-",
-	"auth-",
-	"oauth-",
-	"token-",
-	"tokens-",
-	"caldav-tokens-",
-	"sessions-",
-	"totp-",
-	"user-",
-	"bots-",
-	"webhooks-",
-	"shares-",
-	"migration-",
-	"backgrounds-",
-	"projects-background-",
-	"avatar-",
-	"testing-",
-	"health",
-	"info",
-	"notifications-atom-feed",
-	"task-attachments-download",
+const (
+	catalogTool toolTier = iota
+	typedTool
+)
+
+// Anything not listed stays off MCP; credentials, account, webhooks, shares, file transfer and admin routes are deliberately absent.
+var exposedOperations = map[string]toolTier{
+	"buckets-create":                  catalogTool,
+	"buckets-delete":                  catalogTool,
+	"buckets-list":                    catalogTool,
+	"buckets-update":                  catalogTool,
+	"filters-create":                  catalogTool,
+	"filters-delete":                  catalogTool,
+	"filters-read":                    catalogTool,
+	"filters-update":                  catalogTool,
+	"labels-create":                   typedTool,
+	"labels-delete":                   typedTool,
+	"labels-list":                     typedTool,
+	"labels-read":                     typedTool,
+	"labels-update":                   typedTool,
+	"notifications-delete-all":        catalogTool,
+	"notifications-list":              catalogTool,
+	"notifications-mark-all-read":     catalogTool,
+	"notifications-mark-read":         catalogTool,
+	"project-tasks-list":              catalogTool,
+	"project-teams-create":            catalogTool,
+	"project-teams-delete":            catalogTool,
+	"project-teams-list":              catalogTool,
+	"project-teams-update":            catalogTool,
+	"project-time-entries-list":       catalogTool,
+	"project-users-create":            catalogTool,
+	"project-users-delete":            catalogTool,
+	"project-users-list":              catalogTool,
+	"project-users-update":            catalogTool,
+	"project-view-buckets-tasks-list": catalogTool,
+	"project-view-tasks-list":         catalogTool,
+	"project-views-create":            catalogTool,
+	"project-views-delete":            catalogTool,
+	"project-views-list":              catalogTool,
+	"project-views-read":              catalogTool,
+	"project-views-update":            catalogTool,
+	"projects-create":                 typedTool,
+	"projects-delete":                 typedTool,
+	"projects-duplicate":              catalogTool,
+	"projects-list":                   typedTool,
+	"projects-read":                   typedTool,
+	"projects-update":                 typedTool,
+	"projects-users-search":           catalogTool,
+	"reactions-create":                catalogTool,
+	"reactions-delete":                catalogTool,
+	"reactions-list":                  catalogTool,
+	"task-assignees-bulk":             catalogTool,
+	"task-assignees-create":           typedTool,
+	"task-assignees-delete":           typedTool,
+	"task-assignees-list":             typedTool,
+	"task-attachments-delete":         catalogTool,
+	"task-attachments-list":           catalogTool,
+	"task-bucket-update":              catalogTool,
+	"task-comments-create":            typedTool,
+	"task-comments-delete":            typedTool,
+	"task-comments-list":              typedTool,
+	"task-comments-read":              typedTool,
+	"task-comments-update":            typedTool,
+	"task-labels-bulk-replace":        catalogTool,
+	"task-labels-create":              catalogTool,
+	"task-labels-delete":              catalogTool,
+	"task-labels-list":                catalogTool,
+	"task-time-entries-list":          catalogTool,
+	"tasks-bulk-create":               catalogTool,
+	"tasks-bulk-update":               catalogTool,
+	"tasks-create":                    typedTool,
+	"tasks-delete":                    typedTool,
+	"tasks-duplicate":                 catalogTool,
+	"tasks-list":                      typedTool,
+	"tasks-mark-read":                 catalogTool,
+	"tasks-position-update":           catalogTool,
+	"tasks-read":                      typedTool,
+	"tasks-read-by-index":             catalogTool,
+	"tasks-relations-create":          catalogTool,
+	"tasks-relations-delete":          catalogTool,
+	"tasks-update":                    typedTool,
+	"teams-create":                    catalogTool,
+	"teams-delete":                    catalogTool,
+	"teams-list":                      catalogTool,
+	"teams-members-add":               catalogTool,
+	"teams-members-remove":            catalogTool,
+	"teams-members-toggle-admin":      catalogTool,
+	"teams-read":                      catalogTool,
+	"teams-update":                    catalogTool,
+	"time-entries-create":             catalogTool,
+	"time-entries-delete":             catalogTool,
+	"time-entries-list":               catalogTool,
+	"time-entries-read":               catalogTool,
+	"time-entries-timer-stop":         catalogTool,
+	"time-entries-update":             catalogTool,
+	"users-search":                    typedTool,
 }
 
 func exposure(operationID string, op *huma.Operation) (typed bool, ok bool) {
-	for _, p := range deniedOperationPrefixes {
-		if strings.HasPrefix(operationID, p) {
-			return false, false
-		}
+	tier, exposed := exposedOperations[operationID]
+	if !exposed {
+		return false, false
 	}
 	if op.RequestBody != nil {
 		if _, schema := bodyMedia(op); schema == nil {
 			return false, false
 		}
 	}
-	return typedTools[toolNameFor(operationID)], true
+	return tier == typedTool, true
 }
 func bodyMedia(op *huma.Operation) (contentType string, schema *huma.Schema) {
 	if op.RequestBody == nil {

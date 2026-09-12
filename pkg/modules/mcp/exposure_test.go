@@ -24,6 +24,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// testapi_test.go's fixture serves operations that are not real v2 routes, so the allow-list has to learn them.
+func init() {
+	for _, id := range []string{
+		"things-create",
+		"things-delete",
+		"things-list",
+		"things-read",
+		"things-update",
+		"things-upload",
+	} {
+		exposedOperations[id] = catalogTool
+	}
+}
+
 func TestExposure(t *testing.T) {
 	for _, tc := range []struct {
 		id    string
