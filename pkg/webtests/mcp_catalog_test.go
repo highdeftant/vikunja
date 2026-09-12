@@ -74,22 +74,22 @@ func TestMCP_Catalog_DoActionRoundTrip(t *testing.T) {
 	res := c.callTool("do_action", map[string]any{
 		"action": "task_labels_create",
 		"arguments": map[string]any{
-			"projecttask": 1,
-			"label_id":    7,
+			"task":     1,
+			"label_id": 7,
 		},
 	})
 	require.NotContains(t, res, "isError", toolResultText(t, res))
 	var env map[string]any
 	toolResultJSON(t, c.callTool("do_action", map[string]any{
 		"action":    "task_labels_list",
-		"arguments": map[string]any{"projecttask": 1},
+		"arguments": map[string]any{"task": 1},
 	}), &env)
 	assert.NotEmpty(t, env["items"])
 	res = c.callTool("do_action", map[string]any{
 		"action": "task_labels_delete",
 		"arguments": map[string]any{
-			"projecttask": 1,
-			"label":       7,
+			"task":  1,
+			"label": 7,
 		},
 	})
 	require.NotContains(t, res, "isError", toolResultText(t, res))
@@ -110,8 +110,8 @@ func TestMCP_Catalog_DoActionCannotEscalate(t *testing.T) {
 	res := c.callTool("do_action", map[string]any{
 		"action": "task_labels_create",
 		"arguments": map[string]any{
-			"projecttask": 1,
-			"bogus":       1,
+			"task":  1,
+			"bogus": 1,
 		},
 	})
 	assert.Equal(t, true, res["isError"])
