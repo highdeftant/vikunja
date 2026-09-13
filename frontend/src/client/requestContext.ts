@@ -32,9 +32,12 @@ export function assertClientRequestContext(context: ClientRequestContext): void 
 	}
 }
 
-function canonicalApiBaseUrl(apiBaseUrl: string | undefined): string {
-	const isRootRelative = apiBaseUrl?.startsWith('/') && !apiBaseUrl.startsWith('//')
-	const isHttpUrl = /^https?:\/\//i.test(apiBaseUrl ?? '')
+function canonicalApiBaseUrl(apiBaseUrl: unknown): string {
+	if (typeof apiBaseUrl !== 'string') {
+		throw new DOMException('Invalid client API URL', 'AbortError')
+	}
+	const isRootRelative = apiBaseUrl.startsWith('/') && !apiBaseUrl.startsWith('//')
+	const isHttpUrl = /^https?:\/\//i.test(apiBaseUrl)
 	if (!isRootRelative && !isHttpUrl) {
 		throw new DOMException('Invalid client API URL', 'AbortError')
 	}
@@ -59,7 +62,7 @@ function canonicalApiBaseUrl(apiBaseUrl: string | undefined): string {
 export function assertClientRequestMatchesContext(
 	request: Request,
 	context: ClientRequestContext,
-	configuredApiV2BaseUrl: string | undefined,
+	configuredApiV2BaseUrl: unknown,
 ): void {
 	assertClientRequestContext(context)
 
