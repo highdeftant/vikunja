@@ -219,6 +219,11 @@ export function refreshProject(id: number, format: 'html' | 'markdown' = 'html')
 	return queryClient.fetchQuery({...projectQuery(id, format), staleTime: 0})
 }
 
+export function getCachedProject(id: number): ProjectResponse | undefined {
+	return queryClient.getQueryData<ProjectResponse>(projectKeys.detail(id))
+		?? queryClient.getQueryData<ProjectListResult>(projectKeys.list())?.projects.find(project => project.id === id)
+}
+
 export function getProjectById(projects: readonly ProjectResponse[], id: number): ProjectResponse | undefined {
 	return projects.find(project => project.id === id)
 }

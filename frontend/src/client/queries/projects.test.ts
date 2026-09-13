@@ -49,6 +49,7 @@ import {
 	findProjectByExactTitle,
 	findProjectByIdentifier,
 	getChildProjects,
+	getCachedProject,
 	getEffectiveParentProjectId,
 	getFavoriteNavigationItems,
 	getProjectAncestors,
@@ -114,6 +115,23 @@ describe('project queries', () => {
 	beforeEach(() => {
 		queryClient.clear()
 		Object.values(sdk).forEach(mock => mock.mockReset())
+	})
+
+	it('reads the HTML detail before falling back to the default navigation list', () => {
+		const listed = serverProject({title: 'Listed'})
+		const html = serverProject({title: 'Detailed', description: '<p>HTML</p>'})
+		queryClient.setQueryData(projectKeys.list(), {projects: [listed], favoriteProject: null, savedFilterProjects: []})
+		queryClient.setQueryData(projectKeys.detail(1, 'markdown'), serverProject({description: '**Markdown**'}))
+		expect(getCachedProject(1)).toEqual(listed)
+		queryClient.setQueryData(projectKeys.detail(1), html)
+		expect(getCachedProject(1)).toEqual(html)
+	})
+
+	it('returns undefined for an uncached project without fetching or creating query state', () => {
+		expect(getCachedProject(1)).toBeUndefined()
+		expect(queryClient.getQueryCache().getAll()).toEqual([])
+		expect(sdk.projectsRead).not.toHaveBeenCalled()
+		expect(sdk.projectsList).not.toHaveBeenCalled()
 	})
 
 	it('loads every page and partitions pseudo projects from real projects', async () => {
