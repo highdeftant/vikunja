@@ -1,4 +1,5 @@
-import {queryOptions} from '@tanstack/vue-query'
+import {mutationOptions, queryOptions, useMutation} from '@tanstack/vue-query'
+import type {QueryClient} from '@tanstack/vue-query'
 
 import {
 	projectsCreate,
@@ -16,10 +17,12 @@ import type {
 	ProjectWritable,
 } from '@/client/generated'
 import {queryClient} from '@/client/queryClient'
-import {assertClientRequestContext, captureClientRequestContext} from '@/client/requestContext'
+import {assertClientRequestContext, captureClientRequestContext, isClientRequestContextCurrent} from '@/client/requestContext'
 import {PERMISSIONS} from '@/constants/permissions'
 import {colorFromHex} from '@/helpers/color/colorFromHex'
 import {removeProjectFromHistory} from '@/modules/projectHistory'
+import {i18n} from '@/i18n'
+import {success} from '@/message'
 
 export type ProjectListArgs = Omit<NonNullable<ProjectsListData['query']>, 'page' | 'per_page'>
 
@@ -208,8 +211,12 @@ export function refreshProjects(args: ProjectListArgs = defaultProjectListArgs):
 	return queryClient.fetchQuery({...projectsQuery(args), staleTime: 0})
 }
 
-export function invalidateProjects(): Promise<void> {
-	return queryClient.invalidateQueries({queryKey: projectKeys.all})
+export function ensureProject(id: number, format: 'html' | 'markdown' = 'html'): Promise<ProjectResponse> {
+	return queryClient.ensureQueryData(projectQuery(id, format))
+}
+
+export function refreshProject(id: number, format: 'html' | 'markdown' = 'html'): Promise<ProjectResponse> {
+	return queryClient.fetchQuery({...projectQuery(id, format), staleTime: 0})
 }
 
 export function getProjectById(projects: readonly ProjectResponse[], id: number): ProjectResponse | undefined {
@@ -319,209 +326,335 @@ function projectBody(project: ProjectWritable): ProjectWritable {
 	}
 }
 
-function setProjectInDefaultList(project: ProjectResponse) {
-	queryClient.setQueryData<ProjectListResult>(
-		projectKeys.list(),
-		current => current
-			? {...current, projects: sortProjects([
-				...current.projects.filter(existing => existing.id !== project.id),
-				project,
-			])}
-			: current,
-	)
-}
-
-function setProjectDetail(
+export function replaceProjectInList(
+	current: ProjectListResult,
 	project: ProjectResponse,
-	format: 'html' | 'markdown',
-) {
-	queryClient.removeQueries({
-		queryKey: projectKeys.detailRoot(project.id),
-		predicate: query => query.queryKey[3] !== format,
-	})
-	queryClient.setQueryData(projectKeys.detail(project.id, format), project)
+): ProjectListResult {
+	return {...current, projects: sortProjects([
+		...current.projects.filter(existing => existing.id !== project.id),
+		project,
+	])}
 }
 
-export function updateProjectInCache(
-	projectId: number,
-	updater: (project: ProjectResponse) => Project,
-): void {
-	queryClient.setQueriesData<ProjectListResult>(
-		{queryKey: projectKeys.lists()},
-		current => current
-			? {
-				...current,
-				projects: sortProjects(current.projects.map(project =>
-					project.id === projectId
-						? normalizeProject({...project, ...updater(project)})
-						: project,
-				)),
-			}
-			: current,
-	)
-	queryClient.setQueriesData<ProjectResponse>(
-		{queryKey: projectKeys.detailRoot(projectId)},
-		current => current
-			? normalizeProject({...current, ...updater(current)})
-			: current,
-	)
+export function mapProjectNavigationItem(
+	current: ProjectListResult,
+	id: number,
+	updater: (project: ProjectResponse) => ProjectResponse,
+): ProjectListResult {
+	const update = (project: ProjectResponse) => project.id === id ? updater(project) : project
+	return {
+		projects: sortProjects(current.projects.map(update)),
+		favoriteProject: current.favoriteProject ? update(current.favoriteProject) : null,
+		savedFilterProjects: sortSavedFilters(current.savedFilterProjects.map(update)),
+	}
 }
 
-export function updateProjectNavigationItemInCache(
-	projectId: number,
-	updater: (project: ProjectResponse) => Project,
-): void {
-	queryClient.setQueriesData<ProjectListResult>(
-		{queryKey: projectKeys.lists()},
-		current => {
-			if (!current) {
-				return current
-			}
+function mergeProjectMetadata(previous: ProjectResponse, updated: ProjectResponse): ProjectResponse {
+	return {
+		...previous,
+		...updated,
+		max_permission: updated.max_permission ?? previous.max_permission,
+		views: updated.views.length ? updated.views : previous.views,
+	}
+}
 
-			const update = (project: ProjectResponse) => project.id === projectId
-				? normalizeProject({...project, ...updater(project)})
-				: project
-			return {
-				projects: sortProjects(current.projects.map(update)),
-				favoriteProject: current.favoriteProject?.id === projectId
-					? update(current.favoriteProject)
-					: current.favoriteProject,
-				savedFilterProjects: sortSavedFilters(current.savedFilterProjects.map(update)),
+async function snapshotProjects(client: QueryClient, id?: number) {
+	const request = captureClientRequestContext()
+	await Promise.all([
+		client.cancelQueries({queryKey: projectKeys.lists()}),
+		...(id === undefined ? [] : [client.cancelQueries({queryKey: projectKeys.detailRoot(id)})]),
+	])
+	assertClientRequestContext(request)
+	return {
+		request,
+		lists: client.getQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}),
+		details: id === undefined ? [] : client.getQueriesData<ProjectResponse>({queryKey: projectKeys.detailRoot(id)}),
+	}
+}
+
+type ProjectSnapshot = Awaited<ReturnType<typeof snapshotProjects>>
+
+function restoreProjects(client: QueryClient, snapshot: ProjectSnapshot | undefined) {
+	if (!snapshot || !isClientRequestContextCurrent(snapshot.request)) {
+		return
+	}
+	for (const [key, previous] of [...snapshot.lists, ...snapshot.details]) {
+		if (previous) {
+			client.setQueryData(key, previous)
+		}
+	}
+}
+
+export function createProjectMutationOptions(format: 'html' | 'markdown' = 'html') {
+	return mutationOptions({
+		onMutate: () => ({request: captureClientRequestContext()}),
+		mutationFn: async (project: ProjectWritable) => {
+			const request = captureClientRequestContext()
+			const {data} = await projectsCreate({body: projectBody(project), query: {format}})
+			assertClientRequestContext(request)
+			return normalizeProject(data)
+		},
+		onSuccess: (created, _input, context, {client}) => {
+			assertClientRequestContext(context.request)
+			if (format === 'html') {
+				client.setQueryData<ProjectListResult>(projectKeys.list(), current =>
+					current ? replaceProjectInList(current, created) : current,
+				)
+			}
+			success({message: i18n.global.t('project.create.createdSuccess')})
+		},
+		onSettled: async (_data, _error, _input, context, {client}) => {
+			if (context && isClientRequestContextCurrent(context.request)) {
+				await client.invalidateQueries({queryKey: projectKeys.lists()})
+				assertClientRequestContext(context.request)
 			}
 		},
-	)
+	})
 }
 
-export async function createProject(
-	project: ProjectWritable,
+export function updateProjectMutationOptions(
 	format: 'html' | 'markdown' = 'html',
-): Promise<ProjectResponse> {
-	const context = captureClientRequestContext()
-	await queryClient.cancelQueries({queryKey: projectKeys.lists()})
-	assertClientRequestContext(context)
-	const {data} = await projectsCreate({body: projectBody(project), query: {format}})
-	assertClientRequestContext(context)
-	const created = normalizeProject(data)
-	if (format === 'html') {
-		setProjectInDefaultList(created)
-	}
-	await queryClient.invalidateQueries({queryKey: projectKeys.lists()})
-	assertClientRequestContext(context)
-	return created
+	successMessage?: string,
+) {
+	return mutationOptions({
+		mutationFn: async ({id, ...project}: UpdateProjectInput) => {
+			const request = captureClientRequestContext()
+			const {data} = await projectsUpdate({
+				path: {id},
+				body: projectBody(project),
+				query: {format},
+			})
+			assertClientRequestContext(request)
+			return normalizeProject({...project, ...data})
+		},
+		onMutate: async ({id, ...project}, {client}) => {
+			const snapshot = await snapshotProjects(client, id)
+			client.setQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}, current =>
+				current ? mapProjectNavigationItem(current, id, existing => {
+					const {description: _description, ...fields} = project
+					return normalizeProject({...existing, ...fields})
+				}) : current,
+			)
+			client.setQueriesData<ProjectResponse>({queryKey: projectKeys.detailRoot(id)}, current => {
+				if (!current) {
+					return current
+				}
+				const {description: _description, ...fields} = project
+				return normalizeProject({...current, ...fields})
+			})
+			client.setQueryData<ProjectResponse>(projectKeys.detail(id, format), current =>
+				current ? normalizeProject({...current, ...project}) : current,
+			)
+			return snapshot
+		},
+		onError: (_error, _input, context, {client}) => restoreProjects(client, context),
+		onSuccess: (updated, _input, context, {client}) => {
+			assertClientRequestContext(context.request)
+			if (format === 'html') {
+				client.setQueryData<ProjectListResult>(projectKeys.list(), current =>
+					current ? mapProjectNavigationItem(current, updated.id, previous =>
+						mergeProjectMetadata(previous, updated),
+					) : current,
+				)
+			}
+			client.setQueryData<ProjectResponse>(projectKeys.detail(updated.id, format), current =>
+				current ? mergeProjectMetadata(current, updated) : current,
+			)
+			if (successMessage) {
+				success({message: successMessage})
+			}
+		},
+		onSettled: async (_data, _error, {id}, context, {client}) => {
+			if (context && isClientRequestContextCurrent(context.request)) {
+				await Promise.all([
+					client.invalidateQueries({queryKey: projectKeys.lists()}),
+					client.invalidateQueries({queryKey: projectKeys.detailRoot(id)}),
+				])
+				assertClientRequestContext(context.request)
+			}
+		},
+	})
 }
 
-export async function updateProject(
-	{id, ...project}: UpdateProjectInput,
-	format: 'html' | 'markdown' = 'html',
-): Promise<ProjectResponse> {
-	const context = captureClientRequestContext()
-	await Promise.all([
-		queryClient.cancelQueries({queryKey: projectKeys.lists()}),
-		queryClient.cancelQueries({queryKey: projectKeys.detailRoot(id)}),
-	])
-	assertClientRequestContext(context)
-	const previous = queryClient.getQueryData<ProjectResponse>(projectKeys.detail(id))
-		?? queryClient.getQueriesData<ProjectListResult>({queryKey: projectKeys.lists()})
-			.flatMap(([, result]) => result?.projects ?? [])
-			.find(project => project.id === id)
-	const {data} = await projectsUpdate({
-		path: {id},
-		body: projectBody(project),
-		query: {format},
+export function patchProjectFavoriteMutationOptions() {
+	return mutationOptions({
+		mutationFn: async ({id, isFavorite}: {id: number; isFavorite: boolean}) => {
+			const request = captureClientRequestContext()
+			const {data} = await patchProjectsRead({
+				path: {id},
+				body: [{op: 'replace', path: '/is_favorite', value: isFavorite}],
+			})
+			assertClientRequestContext(request)
+			return normalizeProject(data)
+		},
+		onMutate: async ({id, isFavorite}, {client}) => {
+			const snapshot = await snapshotProjects(client, id)
+			client.setQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}, current =>
+				current ? mapProjectNavigationItem(current, id, project => ({...project, is_favorite: isFavorite})) : current,
+			)
+			client.setQueriesData<ProjectResponse>({queryKey: projectKeys.detailRoot(id)}, current =>
+				current ? {...current, is_favorite: isFavorite} : current,
+			)
+			return snapshot
+		},
+		onError: (_error, _input, context, {client}) => restoreProjects(client, context),
+		onSuccess: (updated, {id}, context, {client}) => {
+			assertClientRequestContext(context.request)
+			client.setQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}, current =>
+				current ? mapProjectNavigationItem(current, id, project => ({...project, is_favorite: updated.is_favorite})) : current,
+			)
+			client.setQueriesData<ProjectResponse>({queryKey: projectKeys.detailRoot(id)}, current =>
+				current ? {...current, is_favorite: updated.is_favorite} : current,
+			)
+		},
+		onSettled: async (_data, _error, {id}, context, {client}) => {
+			if (context && isClientRequestContextCurrent(context.request)) {
+				await Promise.all([
+					client.invalidateQueries({queryKey: projectKeys.lists()}),
+					client.invalidateQueries({queryKey: projectKeys.detailRoot(id)}),
+				])
+				assertClientRequestContext(context.request)
+			}
+		},
 	})
-	assertClientRequestContext(context)
-	const updated = normalizeProject({
-		...previous,
-		...data,
-		max_permission: data.max_permission ?? previous?.max_permission,
-		views: data.views ?? previous?.views,
-	})
-	if (format === 'html') {
-		setProjectInDefaultList(updated)
-	}
-	setProjectDetail(updated, format)
-	await queryClient.invalidateQueries({queryKey: projectKeys.lists()})
-	assertClientRequestContext(context)
-	return updated
-}
-
-export async function patchProjectFavorite(id: number, isFavorite: boolean): Promise<ProjectResponse> {
-	const context = captureClientRequestContext()
-	await Promise.all([
-		queryClient.cancelQueries({queryKey: projectKeys.lists()}),
-		queryClient.cancelQueries({queryKey: projectKeys.detailRoot(id)}),
-	])
-	assertClientRequestContext(context)
-	const {data} = await patchProjectsRead({
-		path: {id},
-		body: [{op: 'replace', path: '/is_favorite', value: isFavorite}],
-	})
-	assertClientRequestContext(context)
-	const updated = normalizeProject(data)
-	updateProjectInCache(id, project => ({...project, is_favorite: updated.is_favorite}))
-	await queryClient.invalidateQueries({queryKey: projectKeys.lists()})
-	assertClientRequestContext(context)
-	return updated
 }
 
 function descendantIds(projects: readonly ProjectResponse[], projectId: number): number[] {
 	const children = projects.filter(project => project.parent_project_id === projectId)
-	return [
-		projectId,
-		...children.flatMap(project => descendantIds(projects, project.id)),
-	]
+	return [projectId, ...children.flatMap(project => descendantIds(projects, project.id))]
 }
 
-export async function deleteProject(projectId: number): Promise<void> {
-	const context = captureClientRequestContext()
-	await queryClient.cancelQueries({queryKey: projectKeys.all})
-	assertClientRequestContext(context)
-	await projectsDelete({path: {id: projectId}})
-	assertClientRequestContext(context)
-	const ids = new Set<number>([projectId])
-	queryClient.setQueriesData<ProjectListResult>(
-		{queryKey: projectKeys.lists()},
-		current => {
-			if (!current) {
-				return current
-			}
-			descendantIds(current.projects, projectId).forEach(id => ids.add(id))
-			return {
-				...current,
-				projects: current.projects.filter(project => !ids.has(project.id)),
+export function deleteProjectMutationOptions() {
+	return mutationOptions({
+		mutationFn: async (id: number) => {
+			const request = captureClientRequestContext()
+			await projectsDelete({path: {id}})
+			assertClientRequestContext(request)
+		},
+		onMutate: async (id, {client}) => {
+			const snapshot = await snapshotProjects(client)
+			const ids = new Set([id])
+			snapshot.lists.forEach(([, result]) => {
+				if (result) {
+					descendantIds(result.projects, id).forEach(child => ids.add(child))
+				}
+			})
+			client.setQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}, current =>
+				current ? {...current, projects: current.projects.filter(project => !ids.has(project.id))} : current,
+			)
+			return {...snapshot, ids}
+		},
+		onError: (_error, _input, context, {client}) => restoreProjects(client, context),
+		onSuccess: (_data, id, context, {client}) => {
+			assertClientRequestContext(context.request)
+			context.ids.forEach(projectId => client.removeQueries({queryKey: projectKeys.detailRoot(projectId)}))
+			removeProjectFromHistory({id})
+			success({message: i18n.global.t('project.delete.success')})
+		},
+		onSettled: async (_data, _error, _input, context, {client}) => {
+			if (context && isClientRequestContextCurrent(context.request)) {
+				await client.invalidateQueries({queryKey: projectKeys.lists()})
+				assertClientRequestContext(context.request)
 			}
 		},
-	)
-	ids.forEach(id => queryClient.removeQueries({queryKey: projectKeys.detailRoot(id)}))
-	removeProjectFromHistory({id: projectId})
+	})
 }
 
-export async function duplicateProject({
-	projectId,
-	parentProjectId = 0,
-	duplicateShares = false,
-}: DuplicateProjectInput): Promise<ProjectResponse> {
-	const context = captureClientRequestContext()
-	await queryClient.cancelQueries({queryKey: projectKeys.lists()})
-	assertClientRequestContext(context)
-	const {data} = await projectsDuplicate({
-		path: {projectid: projectId},
-		body: {
-			parent_project_id: parentProjectId,
-			duplicate_shares: duplicateShares,
+export function duplicateProjectMutationOptions() {
+	return mutationOptions({
+		onMutate: () => ({request: captureClientRequestContext()}),
+		mutationFn: async ({
+			projectId,
+			parentProjectId = 0,
+			duplicateShares = false,
+		}: DuplicateProjectInput) => {
+			const request = captureClientRequestContext()
+			const {data} = await projectsDuplicate({
+				path: {projectid: projectId},
+				body: {parent_project_id: parentProjectId, duplicate_shares: duplicateShares},
+			})
+			assertClientRequestContext(request)
+			if (!data.duplicated_project) {
+				throw new Error('Project duplicate response is missing the duplicated project')
+			}
+			return normalizeProject({...data.duplicated_project, max_permission: PERMISSIONS.ADMIN})
+		},
+		onSuccess: (duplicate, _input, context, {client}) => {
+			assertClientRequestContext(context.request)
+			client.setQueryData<ProjectListResult>(projectKeys.list(), current =>
+				current ? replaceProjectInList(current, duplicate) : current,
+			)
+			success({message: i18n.global.t('project.duplicate.success')})
+		},
+		onSettled: async (_data, _error, _input, context, {client}) => {
+			if (context && isClientRequestContextCurrent(context.request)) {
+				await client.invalidateQueries({queryKey: projectKeys.lists()})
+				assertClientRequestContext(context.request)
+			}
 		},
 	})
-	assertClientRequestContext(context)
-	if (!data.duplicated_project) {
-		throw new Error('Project duplicate response is missing the duplicated project')
-	}
-	const duplicate = normalizeProject({
-		...data.duplicated_project,
-		max_permission: PERMISSIONS.ADMIN,
+}
+
+export function legacySavedFilterFavoriteMutationOptions() {
+	return mutationOptions({
+		mutationFn: async ({id, isFavorite}: {id: number; isFavorite: boolean}) => {
+			const request = captureClientRequestContext()
+			const [{default: SavedFilterService}, {default: SavedFilterModel}] = await Promise.all([
+				import('@/services/savedFilter'),
+				import('@/models/savedFilter'),
+			])
+			assertClientRequestContext(request)
+			const service = new SavedFilterService()
+			const filter = await service.get(new SavedFilterModel({id}))
+			assertClientRequestContext(request)
+			filter.isFavorite = isFavorite
+			const updated = await service.update(filter)
+			assertClientRequestContext(request)
+			return updated
+		},
+		onMutate: async ({id, isFavorite}, {client}) => {
+			const snapshot = await snapshotProjects(client)
+			client.setQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}, current =>
+				current ? mapProjectNavigationItem(current, -id - 1, project => ({...project, is_favorite: isFavorite})) : current,
+			)
+			return snapshot
+		},
+		onError: (_error, _input, context, {client}) => restoreProjects(client, context),
+		onSuccess: (updated, {id}, context, {client}) => {
+			assertClientRequestContext(context.request)
+			client.setQueriesData<ProjectListResult>({queryKey: projectKeys.lists()}, current =>
+				current ? mapProjectNavigationItem(current, -id - 1, project => ({...project, is_favorite: updated.isFavorite})) : current,
+			)
+		},
+		onSettled: async (_data, _error, _input, context, {client}) => {
+			if (context && isClientRequestContextCurrent(context.request)) {
+				await client.invalidateQueries({queryKey: projectKeys.lists()})
+				assertClientRequestContext(context.request)
+			}
+		},
 	})
-	setProjectInDefaultList(duplicate)
-	setProjectDetail(duplicate, 'html')
-	await queryClient.invalidateQueries({queryKey: projectKeys.lists()})
-	assertClientRequestContext(context)
-	return duplicate
+}
+
+export function useCreateProjectMutation(format: 'html' | 'markdown' = 'html') {
+	return useMutation(createProjectMutationOptions(format))
+}
+
+export function useUpdateProjectMutation(format: 'html' | 'markdown' = 'html', successMessage?: string) {
+	return useMutation(updateProjectMutationOptions(format, successMessage))
+}
+
+export function usePatchProjectFavoriteMutation() {
+	return useMutation(patchProjectFavoriteMutationOptions())
+}
+
+export function useDeleteProjectMutation() {
+	return useMutation(deleteProjectMutationOptions())
+}
+
+export function useDuplicateProjectMutation() {
+	return useMutation(duplicateProjectMutationOptions())
+}
+
+export function useLegacySavedFilterFavoriteMutation() {
+	return useMutation(legacySavedFilterFavoriteMutationOptions())
 }

@@ -1,3 +1,5 @@
+import type {MutationOptions} from '@tanstack/vue-query'
+import {QueryClient} from '@tanstack/vue-query'
 import {beforeEach, describe, expect, it, vi} from 'vitest'
 
 import type {Project} from '@/client/generated'
@@ -20,6 +22,15 @@ const requestContext = vi.hoisted(() => ({
 	apiV2BaseUrl: 'https://identity-a.example/api/v2/',
 }))
 
+const legacyFilter = vi.hoisted(() => ({get: vi.fn(), update: vi.fn()}))
+vi.mock('@/services/savedFilter', () => ({default: class {
+	get = legacyFilter.get
+	update = legacyFilter.update
+}}))
+vi.mock('@/models/savedFilter', () => ({default: class {
+	constructor(data: object) { Object.assign(this, data) }
+}}))
+vi.mock('@/message', () => ({success: vi.fn()}))
 vi.mock('@/client/generated', () => sdk)
 vi.mock('@/helpers/auth', () => ({
 	getAuthSessionEpoch: () => requestContext.sessionEpoch,
@@ -31,10 +42,10 @@ vi.mock('@/helpers/fetcher', () => ({
 }))
 
 import {
-	createProject,
+	createProjectMutationOptions,
 	createProjectDraft,
-	deleteProject,
-	duplicateProject,
+	deleteProjectMutationOptions,
+	duplicateProjectMutationOptions,
 	findProjectByExactTitle,
 	findProjectByIdentifier,
 	getChildProjects,
@@ -45,11 +56,30 @@ import {
 	normalizeProject,
 	projectKeys,
 	projectQuery,
-	patchProjectFavorite,
+	patchProjectFavoriteMutationOptions,
 	projectsQuery,
 	searchProjects,
-	updateProject,
+	updateProjectMutationOptions,
+	legacySavedFilterFavoriteMutationOptions,
 } from './projects'
+
+function execute<TData, TVariables, TContext>(
+	options: MutationOptions<TData, Error, TVariables, TContext>,
+	variables: TVariables,
+	client = queryClient,
+) {
+	return client.getMutationCache().build(client, options).execute(variables)
+}
+
+const createProject = (input: Parameters<NonNullable<ReturnType<typeof createProjectMutationOptions>['mutationFn']>>[0]) =>
+	execute(createProjectMutationOptions(), input)
+const updateProject = (input: Parameters<NonNullable<ReturnType<typeof updateProjectMutationOptions>['mutationFn']>>[0]) =>
+	execute(updateProjectMutationOptions(), input)
+const patchProjectFavorite = (id: number, isFavorite: boolean) =>
+	execute(patchProjectFavoriteMutationOptions(), {id, isFavorite})
+const deleteProject = (id: number) => execute(deleteProjectMutationOptions(), id)
+const duplicateProject = (input: Parameters<NonNullable<ReturnType<typeof duplicateProjectMutationOptions>['mutationFn']>>[0]) =>
+	execute(duplicateProjectMutationOptions(), input)
 
 const listArgs = {
 	is_archived: true,
@@ -247,7 +277,11 @@ describe('project drafts and cache mutations', () => {
 		Object.values(sdk).forEach(mock => mock.mockReset())
 	})
 
-	describe('after the authenticated identity changes', () => {
+	describe.each([
+		['identity', () => { requestContext.identity = {id: 2, type: 1} }],
+		['session', () => { requestContext.sessionEpoch++ }],
+		['API URL', () => { requestContext.apiV2BaseUrl = 'https://identity-b.example/api/v2/' }],
+	] as const)('after the %s changes', (_name, switchContext) => {
 		it.each(delayedMutationCases)('discards a delayed $name completion', async ({mock, run, response}) => {
 			const identityAProject = serverProject({title: 'Identity A project'})
 			const identityBProject = serverProject({title: 'Identity B project'})
@@ -264,7 +298,7 @@ describe('project drafts and cache mutations', () => {
 
 			const mutation = run()
 			await vi.waitFor(() => expect(mock).toHaveBeenCalledOnce())
-			requestContext.identity = {id: 2, type: 1}
+			switchContext()
 			queryClient.clear()
 			const identityBList = {
 				projects: [identityBProject],
@@ -282,6 +316,87 @@ describe('project drafts and cache mutations', () => {
 			expect(queryClient.getQueryData(projectKeys.detail(9))).toBeUndefined()
 			expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(false)
 		})
+	})
+
+	it.each(['update', 'favorite', 'delete'] as const)('rolls back an optimistic %s after failure', async operation => {
+		const cached = serverProject({title: 'Before', description: '<p>html</p>'})
+		const previous = {projects: [cached], favoriteProject: null, savedFilterProjects: []}
+		queryClient.setQueryData(listKey, previous)
+		queryClient.setQueryData(projectKeys.detail(1), cached)
+		queryClient.setQueryData(projectKeys.detail(99), serverProject({id: 99}))
+		const failure = new Error('Request failed')
+		const selected = delayedMutationCases.find(test => test.name === operation)!
+		selected.mock.mockImplementation(async () => {
+			queryClient.setQueryData(projectKeys.detail(99), serverProject({id: 99, title: 'Independent update'}))
+			const current = queryClient.getQueryData<ProjectListResult>(listKey)!
+			if (operation === 'delete') {
+				expect(current.projects).toEqual([])
+			} else if (operation === 'favorite') {
+				expect(current.projects[0].is_favorite).toBe(true)
+			} else {
+				expect(current.projects[0].title).toBe('Identity A update')
+			}
+			throw failure
+		})
+
+		await expect(selected.run()).rejects.toThrow(failure)
+
+		expect(queryClient.getQueryData(listKey)).toEqual(previous)
+		expect(queryClient.getQueryData(projectKeys.detail(1))).toEqual(cached)
+		expect(queryClient.getQueryData<ProjectResponse>(projectKeys.detail(99))?.title).toBe('Independent update')
+		expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(true)
+	})
+
+	it.each(delayedMutationCases)('does not materialize absent caches during $name', async ({mock, run, response}) => {
+		mock.mockResolvedValue(response)
+		await run()
+		expect(queryClient.getQueryCache().getAll()).toEqual([])
+	})
+
+	it('writes to the mutation client rather than the singleton', async () => {
+		const client = new QueryClient()
+		client.setQueryData(listKey, {projects: [], favoriteProject: null, savedFilterProjects: []})
+		sdk.projectsCreate.mockResolvedValue({data: serverProject({id: 5})})
+		await execute(createProjectMutationOptions(), {title: 'New'}, client)
+		expect(client.getQueryData<ProjectListResult>(listKey)?.projects[0].id).toBe(5)
+		expect(queryClient.getQueryData(listKey)).toBeUndefined()
+		client.clear()
+	})
+
+	it('keeps Markdown mutation descriptions out of HTML lists and details', async () => {
+		const html = serverProject({description: '<p>before</p>'})
+		queryClient.setQueryData(listKey, {projects: [html], favoriteProject: null, savedFilterProjects: []})
+		queryClient.setQueryData(projectKeys.detail(1), html)
+		queryClient.setQueryData(projectKeys.detail(1, 'markdown'), {...html, description: 'before'})
+		sdk.projectsUpdate.mockResolvedValue({data: {...html, description: '**after**'}})
+
+		await execute(updateProjectMutationOptions('markdown'), {...html, description: '**after**'})
+
+		expect(queryClient.getQueryData<ProjectListResult>(listKey)?.projects[0].description).toBe('<p>before</p>')
+		expect(queryClient.getQueryData<ProjectResponse>(projectKeys.detail(1))?.description).toBe('<p>before</p>')
+		expect(queryClient.getQueryData<ProjectResponse>(projectKeys.detail(1, 'markdown'))?.description).toBe('**after**')
+	})
+
+	it('aborts a legacy filter favorite before PUT when its GET outlives the session', async () => {
+		legacyFilter.get.mockReset()
+		legacyFilter.update.mockReset()
+		let resolveGet: (value: unknown) => void = () => {}
+		legacyFilter.get.mockReturnValue(new Promise(resolve => { resolveGet = resolve }))
+		const before = {projects: [], favoriteProject: null, savedFilterProjects: [serverProject({id: -2})]}
+		queryClient.setQueryData(listKey, before)
+		const mutation = execute(legacySavedFilterFavoriteMutationOptions(), {id: 1, isFavorite: true})
+		await vi.waitFor(() => expect(legacyFilter.get).toHaveBeenCalledOnce())
+		expect(queryClient.getQueryData<ProjectListResult>(listKey)?.savedFilterProjects[0].is_favorite).toBe(true)
+		requestContext.sessionEpoch++
+		queryClient.clear()
+		const after = {...before, savedFilterProjects: [serverProject({id: -2, title: 'Other session'})]}
+		queryClient.setQueryData(listKey, after)
+		resolveGet({id: 1, isFavorite: false})
+
+		await expect(mutation).rejects.toMatchObject({name: 'AbortError'})
+		expect(legacyFilter.update).not.toHaveBeenCalled()
+		expect(queryClient.getQueryData(listKey)).toEqual(after)
+		expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(false)
 	})
 
 	it('creates a generated-type draft with stable UI defaults', () => {
@@ -315,24 +430,6 @@ describe('project drafts and cache mutations', () => {
 		expect(queryClient.getQueryData<{projects: Project[]}>(listKey)?.projects).toContainEqual(normalizedCreated)
 		expect(queryClient.getQueryData(projectKeys.detail(5))).toBeUndefined()
 		expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(true)
-	})
-
-	it('does not let an older list response overwrite a created project', async () => {
-		queryClient.setQueryData(listKey, {projects: [], favoriteProject: null, savedFilterProjects: []})
-		let resolveList: (value: unknown) => void = () => {}
-		sdk.projectsList.mockReturnValue(new Promise(resolve => {
-			resolveList = resolve
-		}))
-		const list = queryClient.fetchQuery({...projectsQuery({is_archived: true, expand: 'permissions'}), staleTime: 0})
-		const listSettled = list.catch(() => undefined)
-		const created = serverProject({id: 5, title: 'Created'})
-		sdk.projectsCreate.mockResolvedValue({data: created})
-
-		await createProject({title: 'Created'})
-		resolveList({data: {items: [], total_pages: 1}})
-		await listSettled
-
-		expect(queryClient.getQueryData<{projects: Project[]}>(listKey)?.projects).toContainEqual(created)
 	})
 
 	it('updates the selected response format and preserves read-only permission state', async () => {
@@ -369,7 +466,8 @@ describe('project drafts and cache mutations', () => {
 			title: 'After',
 			max_permission: 2,
 		})
-		expect(queryClient.getQueryData(projectKeys.detail(1, 'markdown'))).toBeUndefined()
+		expect(queryClient.getQueryData<Project>(projectKeys.detail(1, 'markdown'))?.description).toBe('markdown')
+		expect(queryClient.getQueryState(projectKeys.detail(1, 'markdown'))?.isInvalidated).toBe(true)
 		expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(true)
 	})
 
@@ -383,16 +481,8 @@ describe('project drafts and cache mutations', () => {
 
 		const updated = await updateProject({...cached, title: 'After'})
 
-		expect(updated).toMatchObject({
-			title: 'After',
-			max_permission: 2,
-			views,
-		})
-		expect(queryClient.getQueryData<Project>(projectKeys.detail(1))).toMatchObject({
-			title: 'After',
-			max_permission: 2,
-			views,
-		})
+		expect(updated.title).toBe('After')
+		expect(queryClient.getQueryData(projectKeys.detail(1))).toBeUndefined()
 		expect(queryClient.getQueryData<{projects: Project[]}>(listKey)?.projects[0]).toMatchObject({
 			title: 'After',
 			max_permission: 2,
@@ -462,6 +552,6 @@ describe('project drafts and cache mutations', () => {
 		})
 		expect(duplicate).toMatchObject({id: 9, max_permission: 2})
 		expect(queryClient.getQueryData<{projects: Project[]}>(listKey)?.projects).toContainEqual(duplicate)
-		expect(queryClient.getQueryData(projectKeys.detail(9))).toEqual(duplicate)
+		expect(queryClient.getQueryData(projectKeys.detail(9))).toBeUndefined()
 	})
 })

@@ -10,13 +10,6 @@ vi.mock('@tanstack/vue-query', async importOriginal => ({
 	...await importOriginal<typeof import('@tanstack/vue-query')>(),
 	useQuery,
 }))
-vi.mock('vue-router', () => ({
-	useRouter: () => ({push: vi.fn()}),
-}))
-vi.mock('vue-i18n', () => ({
-	useI18n: () => ({t: (key: string) => key}),
-}))
-vi.mock('@/message', () => ({success: vi.fn()}))
 
 import {useProject} from './useProject'
 
@@ -45,11 +38,13 @@ describe('useProject', () => {
 		const {wrapper, state} = mountProject(1)
 		expect(state.value.project.value.title).toBe('')
 		expect(state.value.isLoading.value).toBe(true)
+		expect(state.value.isLoaded.value).toBe(false)
 
 		data.value = normalizeProject({id: 1, title: 'Fresh'})
 		isFetching.value = false
 		await nextTick()
 		expect(state.value.project.value.title).toBe('Fresh')
+		expect(state.value.isLoaded.value).toBe(true)
 
 		state.value.project.value.title = 'Local edit'
 		isFetching.value = true
@@ -83,6 +78,7 @@ describe('useProject', () => {
 
 		expect(state.value.isLoading.value).toBe(false)
 		expect(state.value.error.value).toBe(error.value)
+		expect(state.value.isLoaded.value).toBe(false)
 
 		data.value = normalizeProject({id: 1, title: 'Recovered'})
 		error.value = null
@@ -90,6 +86,7 @@ describe('useProject', () => {
 		await nextTick()
 
 		expect(state.value.project.value.title).toBe('Recovered')
+		expect(state.value.isLoaded.value).toBe(true)
 		wrapper.unmount()
 	})
 })
