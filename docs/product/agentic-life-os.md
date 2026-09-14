@@ -4,10 +4,15 @@
 
 Initial architecture checkpoint: 2026-09-14.
 
-This fork is the foundation for a self-hosted personal operating system built on
-Vikunja's task, project, permission, and calendar primitives. The goal is not to
-replace Vikunja's core immediately. The goal is to add an agent-friendly layer
-that can safely turn ideas into researched, scheduled, and verified work.
+This fork is the foundation for a self-hosted daily execution system built on
+Vikunja's task, project, permission, and calendar primitives. The primary
+experience should feel closer to the existing Dayroll TUI than to a health
+dashboard: open today's work, see overdue items, move through dates, complete
+tasks, and make the next action obvious.
+
+The goal is not to replace Vikunja's core immediately. The goal is to add a
+Dayroll-style daily workflow and an agent-friendly layer that can safely turn
+ideas into researched, scheduled, and verified work.
 
 ## Product direction
 
@@ -15,11 +20,15 @@ The system should organize:
 
 - projects and tasks;
 - time-blocked work;
-- health and homelab data;
+- overdue and upcoming work;
 - recurring routines and reminders;
 - research notes and follow-up actions;
 - agent proposals and approvals;
 - notifications across phone, laptop, and desktop.
+
+Health, scale, and OpenStrap data are optional integrations. They should not
+dominate the daily task experience or become prerequisites for using the
+planner.
 
 Agents may inspect context, research options, propose changes, and create draft
 work. Destructive or externally visible actions should require explicit approval
@@ -41,7 +50,24 @@ New API routes must use `/api/v2`. Do not extend frozen `/api/v1` routes.
 
 ## Add as a separate product layer
 
-### 1. Work blocks
+### 1. Day-first execution view
+
+The primary view should provide the workflow already proven in
+`~/Labs/gitrepos/rust/dayroll/dayroll`:
+
+- open on today's date;
+- show today's pending/completed tasks;
+- show overdue tasks in a separate section;
+- navigate days and months;
+- quick-add tasks with date and priority tokens;
+- complete, move, edit, delete, and undo;
+- filter/search without leaving the daily view;
+- show a compact calendar and task counters.
+
+Vikunja remains the durable backend and source of truth. The first UI should
+reuse its task/project APIs rather than duplicating task storage.
+
+### 2. Work blocks
 
 A task can become a scheduled work block without changing its basic task
 semantics. A work block needs:
@@ -56,7 +82,7 @@ semantics. A work block needs:
 The first implementation should use existing start/end dates where possible and
 avoid a second scheduler until the current model is proven insufficient.
 
-### 2. Agent activity and proposals
+### 3. Agent activity and proposals
 
 Agents need an auditable record of what they inspected and proposed:
 
@@ -120,13 +146,16 @@ calling the public HTTP API from inside the server.
 ## Initial implementation order
 
 1. Add this product boundary and document the domain vocabulary.
-2. Inventory existing task/date/reminder models and generated v2 API patterns.
-3. Implement read-only schedule and availability queries.
-4. Add agent proposal storage and audit records.
-5. Add work-block scheduling with conflict detection.
-6. Add approval and batch execution.
-7. Replace the external MCP adapter with first-party agent operations.
-8. Integrate scale and OpenStrap health data as separate sources.
+2. Use Dayroll as the interaction reference and inventory its behavior/keybindings.
+3. Inventory existing task/date/reminder models and generated v2 API patterns.
+4. Implement the read-only day-first query/view against Vikunja tasks.
+5. Implement quick-add, move, complete, and undo through the existing API.
+6. Implement read-only schedule and availability queries.
+7. Add agent proposal storage and audit records.
+8. Add work-block scheduling with conflict detection.
+9. Add approval and batch execution.
+10. Replace the external MCP adapter with first-party agent operations.
+11. Integrate scale and OpenStrap health data as optional sources.
 
 ## Design constraints
 
@@ -144,6 +173,7 @@ calling the public HTTP API from inside the server.
 
 - replacing Vikunja's task UI;
 - building a full autonomous calendar optimizer;
+- making health data part of the primary daily view;
 - importing every health metric into the task database;
 - adding a proprietary notification transport;
 - breaking compatibility with standard Vikunja clients.
